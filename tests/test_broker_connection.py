@@ -224,6 +224,7 @@ class TestClientIds:
             "account",
             "collar",
             "portfolio_action",
+            "pmcc_advisor",
             "delta_exposure",
             "options_expiries",
             "options_chain",
