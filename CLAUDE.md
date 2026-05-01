@@ -57,6 +57,10 @@ Use available skills to fetch real-time data and perform analysis:
 
 All generated notebooks, datasets, and reports **must** be saved to `sandbox/`. This directory is gitignored.
 
+**Required fields in all script JSON output:**
+- `generated_at` — NY timezone timestamp, format: `"YYYY-MM-DD HH:MM ET"`
+- `data_delay` — `"real-time"`, `"delayed"`, or `"stalled - using yesterday's data"`
+
 **Naming Convention**: All generated reports must include a timestamp in the filename:
 ```
 <report_name>_YYYY-MM-DD_HHmm.<ext>
