@@ -1,0 +1,475 @@
+# ABOUTME: Unit tests for PMCC advisor analytics functions.
+# ABOUTME: All tests run without IBKR dependency — pure calculation coverage.
+
+
+import pytest
+
+from trading_skills.broker.pmcc_advisor import (
+    build_comparison_table,
+    calc_assignment_prob,
+    calc_bs_price,
+    calc_daily_pnl_table,
+    calc_delta,
+    calc_iv,
+    find_best_rolls,
+    get_option_price,
+    score_roll_candidate,
+)
+
+# ---------------------------------------------------------------------------
+# get_option_price
+# ---------------------------------------------------------------------------
+
+
+def test_get_option_price_mid_with_bid_ask():
+    quote = {"bid": 2.00, "ask": 3.00, "last": 1.50}
+    assert get_option_price(quote, "mid") == pytest.approx(2.50)
+
+
+def test_get_option_price_last():
+    quote = {"bid": 2.00, "ask": 3.00, "last": 1.80}
+    assert get_option_price(quote, "last") == pytest.approx(1.80)
+
+
+def test_get_option_price_mid_falls_back_to_bid():
+    quote = {"bid": 1.50, "ask": None, "last": None}
+    assert get_option_price(quote, "mid") == pytest.approx(1.50)
+
+
+def test_get_option_price_mid_falls_back_to_last():
+    quote = {"bid": None, "ask": None, "last": 2.10}
+    assert get_option_price(quote, "mid") == pytest.approx(2.10)
+
+
+# ---------------------------------------------------------------------------
+# calc_iv
+# ---------------------------------------------------------------------------
+
+
+def test_calc_iv_recovers_known_iv():
+    """Round-trip: price a call with known IV, then back-solve for IV."""
+    spot, strike, dte_days, right = 100.0, 105.0, 30, "C"
+    known_iv = 0.30
+    price = calc_bs_price(spot, strike, dte_days, known_iv, right)
+    recovered_iv = calc_iv(price, spot, strike, dte_days, right)
+    assert recovered_iv is not None
+    assert abs(recovered_iv - known_iv) < 0.001
+
+
+def test_calc_iv_returns_none_for_zero_price():
+    assert calc_iv(0.0, 100, 100, 30, "C") is None
+
+
+def test_calc_iv_deep_itm_call():
+    """Deep ITM call: IV should be calculable."""
+    # $20 ITM call with 30 days — price should be well above intrinsic
+    price = calc_bs_price(120.0, 100.0, 30, 0.25, "C")
+    iv = calc_iv(price, 120.0, 100.0, 30, "C")
+    assert iv is not None
+    assert 0.1 < iv < 1.0
+
+
+# ---------------------------------------------------------------------------
+# calc_delta
+# ---------------------------------------------------------------------------
+
+
+def test_calc_delta_atm_call_near_half():
+    """ATM call delta should be close to 0.5."""
+    delta = calc_delta(spot=100, strike=100, dte_days=30, iv=0.3, right="C")
+    assert 0.45 < delta < 0.55
+
+
+def test_calc_delta_deep_itm_call_near_one():
+    delta = calc_delta(spot=150, strike=100, dte_days=30, iv=0.3, right="C")
+    assert delta > 0.90
+
+
+def test_calc_delta_deep_otm_call_near_zero():
+    delta = calc_delta(spot=80, strike=150, dte_days=30, iv=0.3, right="C")
+    assert delta < 0.05
+
+
+def test_calc_delta_put_is_negative():
+    delta = calc_delta(spot=100, strike=105, dte_days=30, iv=0.3, right="P")
+    assert delta < 0
+
+
+# ---------------------------------------------------------------------------
+# calc_assignment_prob
+# ---------------------------------------------------------------------------
+
+
+def test_calc_assignment_prob_deep_itm_near_one():
+    prob = calc_assignment_prob(spot=200, strike=100, dte_days=1, iv=0.3, right="C")
+    assert prob > 0.95
+
+
+def test_calc_assignment_prob_deep_otm_near_zero():
+    prob = calc_assignment_prob(spot=50, strike=200, dte_days=30, iv=0.3, right="C")
+    assert prob < 0.05
+
+
+def test_calc_assignment_prob_atm_near_half():
+    prob = calc_assignment_prob(spot=100, strike=100, dte_days=30, iv=0.3, right="C")
+    assert 0.35 < prob < 0.65
+
+
+def test_calc_assignment_prob_between_zero_and_one():
+    prob = calc_assignment_prob(spot=100, strike=110, dte_days=21, iv=0.25, right="C")
+    assert 0.0 <= prob <= 1.0
+
+
+# ---------------------------------------------------------------------------
+# calc_bs_price
+# ---------------------------------------------------------------------------
+
+
+def test_calc_bs_price_call_otm_positive():
+    price = calc_bs_price(spot=100, strike=110, dte_days=30, iv=0.3, right="C")
+    assert price > 0
+
+
+def test_calc_bs_price_expired_call_otm_zero():
+    price = calc_bs_price(spot=100, strike=110, dte_days=0, iv=0.3, right="C")
+    assert price == pytest.approx(0.0)
+
+
+def test_calc_bs_price_expired_call_itm_intrinsic():
+    price = calc_bs_price(spot=120, strike=100, dte_days=0, iv=0.3, right="C")
+    assert price == pytest.approx(20.0)
+
+
+# ---------------------------------------------------------------------------
+# calc_daily_pnl_table
+# ---------------------------------------------------------------------------
+
+
+def test_calc_daily_pnl_table_row_count():
+    """Should return exactly short_dte + 1 rows (today through expiry day)."""
+    rows = calc_daily_pnl_table(
+        long_strike=80,
+        long_dte=180,
+        long_cost=15.0,
+        long_iv=0.35,
+        short_strike=105,
+        short_dte=14,
+        short_premium=2.0,
+        short_iv=0.30,
+        qty=1,
+        right="C",
+    )
+    assert len(rows) == 15  # 14 + 1 (day 0 through day 14)
+
+
+def test_calc_daily_pnl_table_first_row_is_today():
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    today = datetime.now(ZoneInfo("America/New_York")).date().isoformat()
+    rows = calc_daily_pnl_table(
+        long_strike=80,
+        long_dte=180,
+        long_cost=15.0,
+        long_iv=0.35,
+        short_strike=105,
+        short_dte=5,
+        short_premium=2.0,
+        short_iv=0.30,
+        qty=1,
+        right="C",
+    )
+    assert rows[0]["date"] == today
+
+
+def test_calc_daily_pnl_table_days_to_expiry_decreases():
+    rows = calc_daily_pnl_table(
+        long_strike=80,
+        long_dte=180,
+        long_cost=15.0,
+        long_iv=0.35,
+        short_strike=105,
+        short_dte=5,
+        short_premium=2.0,
+        short_iv=0.30,
+        qty=1,
+        right="C",
+    )
+    days = [r["days_to_short_expiry"] for r in rows]
+    assert days == list(range(5, -1, -1))
+
+
+def test_calc_daily_pnl_table_has_required_fields():
+    rows = calc_daily_pnl_table(
+        long_strike=80,
+        long_dte=180,
+        long_cost=15.0,
+        long_iv=0.35,
+        short_strike=105,
+        short_dte=3,
+        short_premium=2.0,
+        short_iv=0.30,
+        qty=1,
+        right="C",
+    )
+    for row in rows:
+        assert "date" in row
+        assert "days_to_short_expiry" in row
+        assert "optimal_spot" in row
+        assert "pnl" in row
+        assert isinstance(row["pnl"], float)
+
+
+def test_calc_daily_pnl_table_optimal_spot_is_short_strike():
+    short_strike = 105.0
+    rows = calc_daily_pnl_table(
+        long_strike=80,
+        long_dte=180,
+        long_cost=15.0,
+        long_iv=0.35,
+        short_strike=short_strike,
+        short_dte=3,
+        short_premium=2.0,
+        short_iv=0.30,
+        qty=1,
+        right="C",
+    )
+    for row in rows:
+        assert row["optimal_spot"] == pytest.approx(short_strike)
+
+
+def test_calc_daily_pnl_table_scales_with_qty():
+    rows_1 = calc_daily_pnl_table(
+        long_strike=80,
+        long_dte=180,
+        long_cost=15.0,
+        long_iv=0.35,
+        short_strike=105,
+        short_dte=5,
+        short_premium=2.0,
+        short_iv=0.30,
+        qty=1,
+    )
+    rows_5 = calc_daily_pnl_table(
+        long_strike=80,
+        long_dte=180,
+        long_cost=15.0,
+        long_iv=0.35,
+        short_strike=105,
+        short_dte=5,
+        short_premium=2.0,
+        short_iv=0.30,
+        qty=5,
+    )
+    for r1, r5 in zip(rows_1, rows_5):
+        # Each row is independently rounded to 2 decimal places, so exact 5x may differ by cents
+        assert r5["pnl"] == pytest.approx(r1["pnl"] * 5, abs=0.10)
+
+
+# ---------------------------------------------------------------------------
+# find_best_rolls
+# ---------------------------------------------------------------------------
+
+
+def _make_quote(strike, bid, ask, expiry="20260601"):
+    mid = (bid + ask) / 2 if bid and ask else 0
+    return {"strike": strike, "bid": bid, "ask": ask, "mid": mid, "last": bid, "expiry": expiry}
+
+
+def test_find_best_rolls_returns_at_most_3():
+    # Many candidates, but we only want top 3
+    roll_chains = {
+        "20260601": [
+            _make_quote(115, 1.0, 1.20, "20260601"),  # lower delta, credit roll
+            _make_quote(120, 0.80, 1.00, "20260601"),
+            _make_quote(125, 0.60, 0.80, "20260601"),
+            _make_quote(130, 0.40, 0.60, "20260601"),
+        ],
+    }
+    rolls = find_best_rolls(
+        current_short_strike=110,
+        current_short_expiry="20260501",
+        current_short_dte=1,
+        current_short_price=0.10,  # nearly worthless
+        current_delta=0.40,
+        roll_chains=roll_chains,
+        spot=108.0,
+        long_strike=90.0,
+        long_cost=18.0,
+        min_roll_dte=7,
+        price_mode="mid",
+    )
+    assert len(rolls) <= 3
+
+
+def test_find_best_rolls_filters_by_delta():
+    """Candidates with delta >= current_delta must be excluded."""
+    # At spot=108, IV=0.3, strike=109, 30 dte → delta ≈ 0.49 (high)
+    # strike=125, 30 dte → delta should be much lower
+    roll_chains = {
+        "20260601": [
+            _make_quote(109, 3.50, 3.80, "20260601"),  # near ATM, high delta — should be filtered
+            _make_quote(130, 0.50, 0.70, "20260601"),  # OTM, low delta — should pass
+        ],
+    }
+    rolls = find_best_rolls(
+        current_short_strike=110,
+        current_short_expiry="20260501",
+        current_short_dte=1,
+        current_short_price=0.10,
+        current_delta=0.45,  # filtering threshold
+        roll_chains=roll_chains,
+        spot=108.0,
+        long_strike=90.0,
+        long_cost=18.0,
+        min_roll_dte=7,
+        price_mode="mid",
+    )
+    # All returned rolls must have delta < 0.45
+    for roll in rolls:
+        assert roll["delta"] < 0.45
+
+
+def test_find_best_rolls_requires_net_credit():
+    """Candidates with debit > NET_CREDIT_MIN (-0.10) should be excluded."""
+    roll_chains = {
+        "20260601": [
+            # new mid = 0.25, current = 0.50 → net_credit = -0.25 < -0.10 → excluded
+            _make_quote(130, 0.20, 0.30, "20260601"),
+        ],
+    }
+    rolls = find_best_rolls(
+        current_short_strike=110,
+        current_short_expiry="20260501",
+        current_short_dte=1,
+        current_short_price=0.50,  # expensive to buy back
+        current_delta=0.45,
+        roll_chains=roll_chains,
+        spot=108.0,
+        long_strike=90.0,
+        long_cost=18.0,
+        min_roll_dte=7,
+        price_mode="mid",
+    )
+    assert rolls == []
+
+
+def test_find_best_rolls_result_fields():
+    roll_chains = {
+        "20260601": [
+            _make_quote(120, 1.0, 1.20, "20260601"),
+        ],
+    }
+    rolls = find_best_rolls(
+        current_short_strike=110,
+        current_short_expiry="20260501",
+        current_short_dte=1,
+        current_short_price=0.05,
+        current_delta=0.45,
+        roll_chains=roll_chains,
+        spot=108.0,
+        long_strike=90.0,
+        long_cost=18.0,
+        min_roll_dte=7,
+        price_mode="mid",
+    )
+    for roll in rolls:
+        assert "strike" in roll
+        assert "expiry" in roll
+        assert "dte" in roll
+        assert "delta" in roll
+        assert "assignment_prob" in roll
+        assert "iv_pct" in roll
+        assert "net_credit" in roll
+        assert "profit_per_day" in roll
+
+
+# ---------------------------------------------------------------------------
+# build_comparison_table
+# ---------------------------------------------------------------------------
+
+
+def test_build_comparison_table_has_current():
+    current = {
+        "strike": 110,
+        "expiry": "20260501",
+        "dte": 1,
+        "delta": 0.40,
+        "assignment_prob": 38.5,
+        "price": 0.10,
+        "profit_per_day": 0.10,
+        "total_premium": 2.0,
+    }
+    long_pos = {"strike": 90, "expiry": "20260918", "avg_cost": 18.0}
+    table = build_comparison_table(current=current, rolls=[], long_pos=long_pos)
+    assert "current" in table
+    assert table["current"]["strike"] == 110
+    assert table["current"]["delta"] == 0.40
+
+
+def test_build_comparison_table_has_rolls():
+    current = {
+        "strike": 110,
+        "expiry": "20260501",
+        "dte": 1,
+        "delta": 0.40,
+        "assignment_prob": 38.5,
+        "price": 0.10,
+        "profit_per_day": 0.10,
+        "total_premium": 2.0,
+    }
+    long_pos = {"strike": 90, "expiry": "20260918", "avg_cost": 18.0}
+    roll1 = {
+        "strike": 120,
+        "expiry": "20260601",
+        "dte": 32,
+        "delta": 0.25,
+        "assignment_prob": 20.0,
+        "price": 1.10,
+        "profit_per_day": 0.034,
+        "net_credit": 1.00,
+        "iv_pct": 28.0,
+        "total_premium": 3.10,
+    }
+    table = build_comparison_table(current=current, rolls=[roll1], long_pos=long_pos)
+    assert "roll_1" in table
+    assert table["roll_1"]["strike"] == 120
+
+
+def test_build_comparison_table_pnl_if_assigned():
+    """P&L if assigned = (short_strike - long_strike - long_cost + total_premium) * qty * 100."""
+    current = {
+        "strike": 110,
+        "expiry": "20260501",
+        "dte": 1,
+        "delta": 0.40,
+        "assignment_prob": 38.5,
+        "price": 0.10,
+        "profit_per_day": 0.10,
+        "total_premium": 2.0,
+    }
+    long_pos = {"strike": 90, "expiry": "20260918", "avg_cost": 18.0, "qty": 1}
+    table = build_comparison_table(current=current, rolls=[], long_pos=long_pos)
+    # (110 - 90 - 18.0 + 2.0) * 1 * 100 = 4.0 * 100 = 400
+    assert table["current"]["pnl_if_assigned"] == pytest.approx(400.0)
+
+
+# ---------------------------------------------------------------------------
+# score_roll_candidate
+# ---------------------------------------------------------------------------
+
+
+def test_score_roll_candidate_lower_delta_scores_higher():
+    c1 = {"delta": 0.20, "net_credit": 0.50, "dte": 30}
+    c2 = {"delta": 0.35, "net_credit": 0.50, "dte": 30}
+    s1 = score_roll_candidate(current_delta=0.40, candidate=c1)
+    s2 = score_roll_candidate(current_delta=0.40, candidate=c2)
+    assert s1 > s2
+
+
+def test_score_roll_candidate_more_credit_scores_higher():
+    c1 = {"delta": 0.25, "net_credit": 1.00, "dte": 30}
+    c2 = {"delta": 0.25, "net_credit": 0.10, "dte": 30}
+    s1 = score_roll_candidate(current_delta=0.40, candidate=c1)
+    s2 = score_roll_candidate(current_delta=0.40, candidate=c2)
+    assert s1 > s2

@@ -14,6 +14,7 @@ CLIENT_IDS = {
     "account": 2,
     "collar": 3,
     "portfolio_action": 11,
+    "pmcc_advisor": 12,
     "delta_exposure": 10,
     "options_expiries": 20,
     "options_chain": 21,
