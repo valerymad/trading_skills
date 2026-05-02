@@ -123,7 +123,8 @@ def find_optimal_exit_spot(
     def neg_pnl(S: float) -> float:
         lp = calc_bs_price(S, long_strike, max(long_days_rem, 0), long_iv, right)
         sp = calc_bs_price(S, short_strike, max(short_days_rem, 0), short_iv, right)
-        return -((lp - long_cost) + (short_premium - sp))
+        # short_premium excluded: already realised as income and misleading after rolls
+        return -((lp - long_cost) - sp)
 
     lo = max(spot * 0.5, long_strike * 1.01)
     hi = spot * 2.0
