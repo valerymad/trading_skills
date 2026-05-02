@@ -5,7 +5,6 @@
 import pytest
 
 from trading_skills.broker.pmcc_advisor import (
-    _identify_pmcc_spreads,
     build_comparison_table,
     calc_assignment_prob,
     calc_bs_price,
@@ -14,10 +13,10 @@ from trading_skills.broker.pmcc_advisor import (
     calc_iv,
     calc_profit_per_day,
     check_earnings_warning,
+    filter_spreads_by_symbols,
     find_best_rolls,
     find_optimal_exit_spot,
     find_roll_expiration_targets,
-    filter_spreads_by_symbols,
     get_option_price,
     score_roll_candidate,
 )

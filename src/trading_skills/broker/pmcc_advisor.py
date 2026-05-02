@@ -627,9 +627,7 @@ async def _fetch_option_quotes_batch(
     return sorted(results, key=lambda x: x["strike"])
 
 
-def filter_spreads_by_symbols(
-    spreads: list[dict], symbols: list[str] | None
-) -> list[dict]:
+def filter_spreads_by_symbols(spreads: list[dict], symbols: list[str] | None) -> list[dict]:
     """Return only spreads whose symbol is in the given list (case-insensitive).
 
     Returns all spreads unchanged when symbols is None.
