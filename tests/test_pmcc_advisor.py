@@ -165,11 +165,14 @@ def test_calc_daily_pnl_table_row_count():
     assert 1 <= len(rows) <= 5
 
 
-def test_calc_daily_pnl_table_first_row_is_today():
-    from datetime import datetime
+def test_calc_daily_pnl_table_first_row_is_next_trading_day():
+    from datetime import datetime, timedelta
     from zoneinfo import ZoneInfo
 
-    today = datetime.now(ZoneInfo("America/New_York")).date().isoformat()
+    from trading_skills.utils import trading_sessions
+
+    today = datetime.now(ZoneInfo("America/New_York")).date()
+    first_session = trading_sessions(today, today + timedelta(days=7))[0]
     rows = calc_daily_pnl_table(
         long_strike=80,
         long_dte=180,
@@ -183,7 +186,7 @@ def test_calc_daily_pnl_table_first_row_is_today():
         spot=100.0,
         right="C",
     )
-    assert rows[0]["date"] == today
+    assert rows[0]["date"] == first_session.isoformat()
 
 
 def test_calc_daily_pnl_table_days_to_expiry_decreases():

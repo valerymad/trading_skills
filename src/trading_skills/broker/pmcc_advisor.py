@@ -61,29 +61,31 @@ def get_option_price(quote: dict, price_mode: str) -> float | None:
     return last if last and last > 0 else None
 
 
-def calc_iv(price: float, spot: float, strike: float, dte_days: int, right: str) -> float | None:
+def calc_iv(price: float, spot: float, strike: float, dte_days: float, right: str) -> float | None:
     """Calculate implied volatility from option price via Newton-Raphson / bisection."""
     if not price or price <= 0:
         return None
-    T = max(dte_days, 0.5) / 365
+    T = max(dte_days, 1 / 24) / 365
     opt_type = "call" if right == "C" else "put"
     return implied_volatility(price, spot, strike, T, RISK_FREE_RATE, opt_type)
 
 
-def calc_delta(spot: float, strike: float, dte_days: int, iv: float, right: str) -> float:
+def calc_delta(spot: float, strike: float, dte_days: float, iv: float, right: str) -> float:
     """Calculate Black-Scholes delta."""
-    T = max(dte_days, 0.5) / 365
+    T = max(dte_days, 1 / 24) / 365
     opt_type = "call" if right == "C" else "put"
     return black_scholes_delta(spot, strike, T, RISK_FREE_RATE, iv, opt_type)
 
 
-def calc_assignment_prob(spot: float, strike: float, dte_days: int, iv: float, right: str) -> float:
+def calc_assignment_prob(
+    spot: float, strike: float, dte_days: float, iv: float, right: str
+) -> float:
     """Calculate probability of assignment (= probability of expiring ITM).
 
     Uses N(d2) for calls, N(-d2) for puts — the risk-neutral probability that
     the option expires in the money.
     """
-    T = max(dte_days, 0.5) / 365
+    T = max(dte_days, 1 / 24) / 365
     if T <= 0 or iv <= 0:
         return 0.0
     sqrt_T = math.sqrt(T)
@@ -92,7 +94,7 @@ def calc_assignment_prob(spot: float, strike: float, dte_days: int, iv: float, r
     return norm.cdf(d2) if right == "C" else norm.cdf(-d2)
 
 
-def calc_bs_price(spot: float, strike: float, dte_days: int, iv: float, right: str) -> float:
+def calc_bs_price(spot: float, strike: float, dte_days: float, iv: float, right: str) -> float:
     """Calculate Black-Scholes option price."""
     T = max(dte_days, 0) / 365
     opt_type = "call" if right == "C" else "put"
@@ -131,11 +133,11 @@ def find_optimal_exit_spot(
 
 def calc_daily_pnl_table(
     long_strike: float,
-    long_dte: int,
+    long_dte: float,
     long_cost: float,
     long_iv: float,
     short_strike: float,
-    short_dte: int,
+    short_dte: float,
     short_premium: float,
     short_iv: float,
     qty: int,
@@ -201,7 +203,7 @@ def score_roll_candidate(current_delta: float, candidate: dict) -> float:
 def find_best_rolls(
     current_short_strike: float,
     current_short_expiry: str,
-    current_short_dte: int,
+    current_short_dte: float,
     current_short_price: float,
     current_delta: float,
     roll_chains: dict,
@@ -235,7 +237,7 @@ def find_best_rolls(
             strike = quote["strike"]
             iv = calc_iv(price, spot, strike, dte, "C")
             if not iv:
-                iv = estimate_iv(spot, strike, max(dte, 1) / 365, "call")
+                iv = estimate_iv(spot, strike, max(dte, 1 / 24) / 365, "call")
             if not iv:
                 continue
 
@@ -249,7 +251,7 @@ def find_best_rolls(
             if net_credit < NET_CREDIT_MIN:
                 continue
 
-            profit_per_day = price / dte if dte > 0 else 0
+            profit_per_day = price / max(dte, 1 / 24)
             spread_width = strike - long_strike
             pnl_if_assigned = (spread_width - long_cost + price) * 100
 
@@ -803,7 +805,7 @@ async def get_pmcc_data(
                     short_iv = short_quote["ib_iv_pct"] / 100
                 if not short_iv:
                     short_iv = estimate_iv(
-                        spot, short_pos["strike"], max(short_dte, 1) / 365, "call"
+                        spot, short_pos["strike"], max(short_dte, 1 / 24) / 365, "call"
                     )
                     data_delay = "stalled - using estimated IV"
 
@@ -819,7 +821,8 @@ async def get_pmcc_data(
                 if not long_iv and long_quote and long_quote.get("ib_iv_pct"):
                     long_iv = long_quote["ib_iv_pct"] / 100
                 if not long_iv:
-                    long_iv = estimate_iv(spot, long_pos["strike"], max(long_dte, 1) / 365, "call")
+                    t = max(long_dte, 1 / 24) / 365
+                    long_iv = estimate_iv(spot, long_pos["strike"], t, "call")
 
                 # Daily P&L table — next 5 trading days, optimal-exit spot per day
                 daily_pnl = []
@@ -862,7 +865,7 @@ async def get_pmcc_data(
                     "delta": round(abs(short_delta), 4),
                     "assignment_prob": round(short_assign_prob * 100, 1),
                     "price": round(short_price, 2) if short_price else None,
-                    "profit_per_day": round(abs(short_pos["avg_cost"]) / max(short_dte, 1), 4),
+                    "profit_per_day": round(abs(short_pos["avg_cost"]) / max(short_dte, 1 / 24), 4),
                     "total_premium": abs(short_pos["avg_cost"]),
                 }
                 comparison = build_comparison_table(

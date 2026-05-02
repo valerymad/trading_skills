@@ -139,6 +139,38 @@ class TestDaysToExpiry:
         days = days_to_expiry(expiry_str)
         assert days < 0
 
+    def test_returns_float(self):
+        future = datetime.now() + timedelta(days=7)
+        expiry_str = future.strftime("%Y%m%d")
+        days = days_to_expiry(expiry_str)
+        assert isinstance(days, float)
+
+    def test_same_day_before_close_is_fractional(self):
+        from zoneinfo import ZoneInfo
+
+        ny = ZoneInfo("America/New_York")
+        today_str = datetime.now(ny).strftime("%Y%m%d")
+        # Mock now to 10am ET so close is still 6h away
+        fake_now = datetime.now(ny).replace(hour=10, minute=0, second=0, microsecond=0)
+        with patch("trading_skills.utils.datetime") as mock_dt:
+            mock_dt.now.return_value = fake_now
+            mock_dt.strptime.side_effect = datetime.strptime
+            days = days_to_expiry(today_str)
+        assert 0 < days < 1
+
+    def test_same_day_at_or_after_close_returns_minimum(self):
+        from zoneinfo import ZoneInfo
+
+        ny = ZoneInfo("America/New_York")
+        today_str = datetime.now(ny).strftime("%Y%m%d")
+        # Mock now to 17:00 ET (after close)
+        fake_now = datetime.now(ny).replace(hour=17, minute=0, second=0, microsecond=0)
+        with patch("trading_skills.utils.datetime") as mock_dt:
+            mock_dt.now.return_value = fake_now
+            mock_dt.strptime.side_effect = datetime.strptime
+            days = days_to_expiry(today_str)
+        assert days == pytest.approx(1 / 24)
+
     def test_invalid_returns_999(self):
         assert days_to_expiry("invalid") == 999
 

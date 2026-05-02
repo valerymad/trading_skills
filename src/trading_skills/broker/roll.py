@@ -186,7 +186,7 @@ def evaluate_short_candidates(
     quotes: list,
     underlying_price: float,
     right: str,
-    days_to_exp: int,
+    days_to_exp: float,
 ) -> list:
     """Evaluate and score potential short options to open."""
     candidates = []
@@ -208,7 +208,7 @@ def evaluate_short_candidates(
             continue
 
         # Annualized return on capital (for covered call: premium / strike)
-        annual_factor = 365 / max(days_to_exp, 1)
+        annual_factor = 365 / max(days_to_exp, 1 / 24)
         annual_return = (premium / underlying_price) * annual_factor * 100
 
         # Score based on:
