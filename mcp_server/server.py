@@ -23,6 +23,7 @@ from trading_skills.broker.options import (
 from trading_skills.broker.options import (
     get_option_chain as ib_get_option_chain,
 )
+from trading_skills.broker.pmcc_advisor import get_pmcc_data
 from trading_skills.broker.portfolio import get_portfolio
 from trading_skills.broker.portfolio_action import (
     analyze_portfolio,
@@ -34,17 +35,17 @@ from trading_skills.earnings import get_earnings_info, get_multiple_earnings
 from trading_skills.fundamentals import get_fundamentals
 from trading_skills.greeks import calculate_greeks
 from trading_skills.history import get_history
+from trading_skills.insider_trading import (
+    get_insider_transactions,
+    get_multiple_insider_transactions,
+)
+from trading_skills.massive.whales import whales_hunter
 from trading_skills.news import get_news
 from trading_skills.options import get_expiries, get_option_chain
 from trading_skills.piotroski import calculate_piotroski_score
 from trading_skills.quote import get_quote
 from trading_skills.report import generate_report_data
 from trading_skills.risk import calculate_risk_metrics
-from trading_skills.insider_trading import (
-    get_insider_transactions,
-    get_multiple_insider_transactions,
-)
-from trading_skills.massive.whales import whales_hunter
 from trading_skills.scanner_bullish import compute_bullish_score, scan_symbols
 from trading_skills.scanner_pmcc import analyze_pmcc, format_scan_results
 from trading_skills.spreads import (
@@ -391,9 +392,7 @@ def spread_iron_condor(
         call_short: Short call strike
         call_long: Long call strike (highest)
     """
-    return analyze_iron_condor(
-        symbol.upper(), expiry, put_long, put_short, call_short, call_long
-    )
+    return analyze_iron_condor(symbol.upper(), expiry, put_long, put_short, call_short, call_long)
 
 
 # ============================================================================
@@ -507,8 +506,12 @@ def whale_hunting(
     )
 
     whales = result["whales"]
-    call_invested = sum(w["invested"] for w in whales if w.get("type") == "call" and w.get("invested"))
-    put_invested = sum(w["invested"] for w in whales if w.get("type") == "put" and w.get("invested"))
+    call_invested = sum(
+        w["invested"] for w in whales if w.get("type") == "call" and w.get("invested")
+    )
+    put_invested = sum(
+        w["invested"] for w in whales if w.get("type") == "put" and w.get("invested")
+    )
 
     output = {
         "underlying": symbol.upper(),
@@ -519,8 +522,7 @@ def whale_hunting(
         "total_put_invested": round(put_invested, 2),
         "call_put_ratio": round(call_invested / put_invested, 4) if put_invested > 0 else None,
         "whales": [
-            {**w, "timestamp": str(w["timestamp"]), "expiry": str(w["expiry"])}
-            for w in whales
+            {**w, "timestamp": str(w["timestamp"]), "expiry": str(w["expiry"])} for w in whales
         ],
     }
 
@@ -528,7 +530,11 @@ def whale_hunting(
         df = pd.DataFrame(whales)
         agg = (
             df.groupby(["ticker", "type", "strike", "expiry"])
-            .agg(whale_count=("invested", "count"), total_invested=("invested", "sum"), break_even=("break_even", "first"))
+            .agg(
+                whale_count=("invested", "count"),
+                total_invested=("invested", "sum"),
+                break_even=("break_even", "first"),
+            )
             .reset_index()
             .sort_values("total_invested", ascending=False)
         )
@@ -682,6 +688,37 @@ async def ib_delta_exposure(port: int = 7496) -> dict:
         port: IB port (7496 for live, 7497 for paper)
     """
     return await get_delta_exposure(port)
+
+
+@mcp.tool()
+async def ib_pmcc_advisor(
+    port: int = 7496,
+    account: str | None = None,
+    symbols: str | None = None,
+    min_roll_dte: int = 7,
+    price_mode: str = "mid",
+) -> dict:
+    """Analyze PMCC (diagonal call spread) positions and recommend roll actions.
+
+    For each spread: reports assignment probability, P&L projections, roll
+    candidates ranked by delta improvement and credit, and a comparison table.
+    Requires TWS or IB Gateway running locally.
+
+    Args:
+        port: IB port (7496 for live, 7497 for paper)
+        account: Specific account ID (optional)
+        symbols: Comma-separated symbols to filter (optional, e.g. 'NVDA,WMT')
+        min_roll_dte: Minimum DTE for roll candidates (default 7)
+        price_mode: Option price source — 'mid' (bid+ask)/2 or 'last'
+    """
+    symbol_list = [s.strip().upper() for s in symbols.split(",")] if symbols else None
+    return await get_pmcc_data(
+        port=port,
+        account=account,
+        min_roll_dte=min_roll_dte,
+        price_mode=price_mode,
+        symbols=symbol_list,
+    )
 
 
 @mcp.tool()
