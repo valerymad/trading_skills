@@ -94,10 +94,20 @@ def safe_value(val):
 
 
 async def fetch_with_timeout(coro, timeout: float, default=None):
-    """Run coroutine with timeout, return default if timeout or error."""
+    """Run coroutine with timeout, return default if timeout or error.
+
+    Uses asyncio.wait instead of wait_for to avoid Python 3.12 deadlock where
+    wait_for awaits the cancelled task indefinitely when ib_async ignores CancelledError.
+    """
+    task = asyncio.ensure_future(coro)
     try:
-        return await asyncio.wait_for(coro, timeout=timeout)
-    except (asyncio.TimeoutError, Exception):
+        done, pending = await asyncio.wait({task}, timeout=timeout)
+        if pending:
+            task.cancel()
+            return default
+        return task.result()
+    except Exception:
+        task.cancel()
         return default
 
 
@@ -111,12 +121,22 @@ def generated_at_str() -> str:
     return datetime.now(_NY).strftime("%Y-%m-%d %H:%M ET")
 
 
-def days_to_expiry(expiry_str: str) -> int:
-    """Calculate days until expiration from YYYYMMDD string."""
+def days_to_expiry(expiry_str: str) -> float:
+    """Calculate fractional days until expiration from YYYYMMDD string.
+
+    Uses 16:00 ET as the expiry time. Minimum return value is 1/24 (one hour).
+    Past expiry dates return a negative float.
+    """
     try:
         exp_date = datetime.strptime(expiry_str, "%Y%m%d").date()
-        today = datetime.now(_NY).date()
-        return (exp_date - today).days
+        now = datetime.now(_NY)
+        today = now.date()
+        if exp_date < today:
+            return float((exp_date - today).days)
+        days_ahead = (exp_date - today).days
+        close_seconds = days_ahead * 86400 + 16 * 3600
+        now_seconds = now.hour * 3600 + now.minute * 60 + now.second + now.microsecond / 1e6
+        return max((close_seconds - now_seconds) / 86400, 1 / 24)
     except Exception:
         return 999
 
