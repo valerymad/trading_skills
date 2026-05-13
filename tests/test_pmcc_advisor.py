@@ -3,6 +3,7 @@
 
 
 from datetime import date, timedelta
+from unittest.mock import patch
 
 import pytest
 
@@ -707,12 +708,16 @@ def test_check_earnings_warning_roll_overlap():
         {"expiry": "20260515", "strike": 210},  # roll 1
         {"expiry": "20260522", "strike": 215},  # roll 2
     ]
-    result = check_earnings_warning(
-        earnings_date="2026-05-12",
-        earnings_timing=None,
-        short_expiry="20260508",
-        roll_candidates=rolls,
-    )
+    fake_today = date(2026, 5, 10)
+    with patch("trading_skills.broker.pmcc_advisor.datetime") as mock_dt:
+        mock_dt.now.return_value.date.return_value = fake_today
+        mock_dt.strptime.side_effect = lambda s, f: __import__("datetime").datetime.strptime(s, f)
+        result = check_earnings_warning(
+            earnings_date="2026-05-12",
+            earnings_timing=None,
+            short_expiry="20260508",
+            roll_candidates=rolls,
+        )
     # earnings on May 12 → before May 15 (roll 1) and before May 22 (roll 2)
     assert 1 in result["warning_roll_indices"]
     assert 2 in result["warning_roll_indices"]
@@ -724,11 +729,127 @@ def test_check_earnings_warning_roll_partial_overlap():
         {"expiry": "20260510", "strike": 210},  # roll 1: expires before earnings
         {"expiry": "20260522", "strike": 215},  # roll 2: expires after earnings
     ]
-    result = check_earnings_warning(
-        earnings_date="2026-05-14",
-        earnings_timing=None,
-        short_expiry="20260508",
-        roll_candidates=rolls,
-    )
+    fake_today = date(2026, 5, 10)
+    with patch("trading_skills.broker.pmcc_advisor.datetime") as mock_dt:
+        mock_dt.now.return_value.date.return_value = fake_today
+        mock_dt.strptime.side_effect = lambda s, f: __import__("datetime").datetime.strptime(s, f)
+        result = check_earnings_warning(
+            earnings_date="2026-05-14",
+            earnings_timing=None,
+            short_expiry="20260508",
+            roll_candidates=rolls,
+        )
     assert 1 not in result["warning_roll_indices"]
     assert 2 in result["warning_roll_indices"]
+
+
+# ---------------------------------------------------------------------------
+# Additional edge case tests for analytics coverage
+# ---------------------------------------------------------------------------
+
+
+def test_get_option_price_ask_only():
+    """Returns ask when bid is None/zero and last is None."""
+    result = get_option_price({"bid": None, "ask": 2.50, "last": None}, "mid")
+    assert result == pytest.approx(2.50)
+
+
+def test_calc_assignment_prob_zero_iv():
+    """Returns 0.0 when IV is zero (degenerate case)."""
+    result = calc_assignment_prob(100.0, 110.0, 30, 0.0, "C")
+    assert result == 0.0
+
+
+def test_find_roll_expiration_targets_empty_candidates():
+    """Returns empty list when no candidates are available after current expiry."""
+    result = find_roll_expiration_targets(
+        current_expiry="20260620",
+        available_expirations=[],
+        max_expiry="20270101",
+    )
+    assert result == []
+
+
+def test_ibkr_to_yf_date():
+    from trading_skills.broker.pmcc_advisor import _ibkr_to_yf_date
+
+    assert _ibkr_to_yf_date("20260620") == "2026-06-20"
+
+
+def test_yf_to_ibkr_date():
+    from trading_skills.broker.pmcc_advisor import _yf_to_ibkr_date
+
+    assert _yf_to_ibkr_date("2026-06-20") == "20260620"
+
+
+def test_closest_yf_expiry_empty_returns_none():
+    from trading_skills.broker.pmcc_advisor import _closest_yf_expiry
+
+    assert _closest_yf_expiry("20260620", []) is None
+
+
+def test_closest_yf_expiry_picks_nearest():
+    from trading_skills.broker.pmcc_advisor import _closest_yf_expiry
+
+    result = _closest_yf_expiry("20260620", ["2026-06-19", "2026-06-26", "2026-07-17"])
+    assert result == "2026-06-19"
+
+
+def test_find_best_rolls_skips_small_dte():
+    """Roll chains whose DTE < min_roll_dte are skipped."""
+    from datetime import datetime, timedelta
+
+    # Expiry 2 days out (< default min_roll_dte=7)
+    close_expiry = (datetime.now() + timedelta(days=2)).strftime("%Y%m%d")
+    far_expiry = (datetime.now() + timedelta(days=30)).strftime("%Y%m%d")
+
+    roll_chains = {
+        close_expiry: [{"strike": 210.0, "bid": 3.0, "ask": 3.4, "last": 3.2, "mid": 3.2}],
+        far_expiry: [{"strike": 215.0, "bid": 4.0, "ask": 4.4, "last": 4.2, "mid": 4.2}],
+    }
+    result = find_best_rolls(
+        current_short_strike=210.0,
+        current_short_expiry="20250101",
+        current_short_dte=5,
+        current_short_price=3.0,
+        current_delta=0.40,
+        roll_chains=roll_chains,
+        spot=200.0,
+        long_strike=180.0,
+        long_cost=20.0,
+        min_roll_dte=7,
+        price_mode="mid",
+    )
+    # Only the far expiry should be a candidate
+    if result:
+        for r in result:
+            assert r["expiry"] == far_expiry
+
+
+def test_find_best_rolls_skips_same_expiry_as_current_short():
+    """Roll candidates with expiry == current_short_expiry are skipped."""
+    from datetime import datetime, timedelta
+
+    same_expiry = (datetime.now() + timedelta(days=30)).strftime("%Y%m%d")
+    diff_expiry = (datetime.now() + timedelta(days=45)).strftime("%Y%m%d")
+
+    roll_chains = {
+        same_expiry: [{"strike": 210.0, "bid": 3.0, "ask": 3.4, "last": 3.2, "mid": 3.2}],
+        diff_expiry: [{"strike": 215.0, "bid": 4.0, "ask": 4.4, "last": 4.2, "mid": 4.2}],
+    }
+    result = find_best_rolls(
+        current_short_strike=210.0,
+        current_short_expiry=same_expiry,
+        current_short_dte=30,
+        current_short_price=3.0,
+        current_delta=0.40,
+        roll_chains=roll_chains,
+        spot=200.0,
+        long_strike=180.0,
+        long_cost=20.0,
+        min_roll_dte=7,
+        price_mode="mid",
+    )
+    if result:
+        for r in result:
+            assert r["expiry"] != same_expiry

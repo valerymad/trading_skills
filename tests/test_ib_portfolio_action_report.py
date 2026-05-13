@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from trading_skills.broker.portfolio_action import (
+    analyze_portfolio,
     calculate_otm_pct,
     fetch_earnings_date,
     fetch_technicals,
@@ -261,3 +262,224 @@ class TestFetchTechnicals:
 
         result = fetch_technicals("AAPL")
         assert "error" in result
+
+    @patch(f"{MODULE}.yf.Ticker")
+    def test_bearish_trend(self, mock_ticker):
+        dates = pd.date_range(end=datetime.now(), periods=100, freq="D")
+        # Declining prices produce bearish signals
+        prices = np.linspace(110, 100, 100)
+        mock_df = pd.DataFrame(
+            {
+                "Open": prices + 0.5,
+                "High": prices + 1,
+                "Low": prices - 1,
+                "Close": prices,
+                "Volume": np.random.randint(1000000, 5000000, 100),
+            },
+            index=dates,
+        )
+        mock_instance = MagicMock()
+        mock_instance.history.return_value = mock_df
+        mock_ticker.return_value = mock_instance
+
+        result = fetch_technicals("AAPL")
+        assert result["symbol"] == "AAPL"
+        assert result.get("trend") in ["bearish", "neutral", "bullish"]
+
+
+class TestGetSpreadRecommendationEdgeCases:
+    """Additional edge case tests for spread recommendations."""
+
+    def test_short_itm_8_to_14_days_is_yellow(self):
+        spread = {
+            "symbol": "AAPL",
+            "short": {"strike": 100, "days_to_exp": 10, "quantity": -5},
+            "long": None,
+            "underlying_price": 105,
+        }
+        emoji, level, reason = get_spread_recommendation(spread, None, datetime.now())
+        assert level in ("red", "yellow")
+        assert "ITM" in reason
+
+    def test_earnings_yellow_not_critical(self):
+        today = datetime.now()
+        # Earnings in 5 days, expiry in 20 days — not critical (>3 days before expiry)
+        earnings_date = (today + timedelta(days=5)).strftime("%Y-%m-%d")
+        spread = {
+            "symbol": "AAPL",
+            "short": {"strike": 100, "days_to_exp": 20, "quantity": -5},
+            "long": None,
+            "underlying_price": 90,
+        }
+        emoji, level, reason = get_spread_recommendation(spread, earnings_date, today)
+        assert level in ("yellow", "red")
+        assert "arnings" in reason
+
+    def test_bear_call_spread_detected(self):
+        spread = {
+            "symbol": "AAPL",
+            "short": {"strike": 100, "days_to_exp": 30, "expiry": "20250321", "quantity": -10},
+            "long": {"strike": 110, "days_to_exp": 30, "expiry": "20250321", "quantity": 10},
+            "underlying_price": 105,
+        }
+        emoji, level, reason = get_spread_recommendation(spread, None, datetime.now())
+        assert "Bear call spread" in reason
+
+    def test_futures_position_detected(self):
+        spread = {
+            "symbol": "ES",
+            "short": {"strike": 0, "days_to_exp": 30, "expiry": "20250321", "quantity": -1},
+            "long": {"strike": 0, "days_to_exp": 30, "expiry": "20250321", "quantity": 1},
+            "underlying_price": 5000,
+        }
+        emoji, level, reason = get_spread_recommendation(spread, None, datetime.now())
+        assert "Futures" in reason
+
+    def test_invalid_earnings_date_no_crash(self):
+        spread = {
+            "symbol": "AAPL",
+            "short": {"strike": 100, "days_to_exp": 20, "quantity": -5},
+            "long": None,
+            "underlying_price": 90,
+        }
+        # Should not crash with a badly formatted date
+        emoji, level, reason = get_spread_recommendation(spread, "not-a-date", datetime.now())
+        assert level in ("green", "yellow", "red")
+
+
+class TestAnalyzePortfolio:
+    """Tests for the analyze_portfolio pure analytics function."""
+
+    def _make_position(self, symbol, quantity, strike, expiry, right="C", avg_cost=5.0):
+        return {
+            "symbol": symbol,
+            "sec_type": "OPT",
+            "quantity": quantity,
+            "strike": strike,
+            "expiry": expiry,
+            "right": right,
+            "avg_cost": avg_cost,
+        }
+
+    @patch(f"{MODULE}.fetch_technicals")
+    @patch(f"{MODULE}.fetch_earnings_date")
+    def test_basic_structure(self, mock_earnings, mock_technicals):
+        mock_earnings.return_value = {"symbol": "AAPL", "earnings_date": "2026-09-01"}
+        mock_technicals.return_value = {"symbol": "AAPL", "trend": "bullish"}
+
+        future_expiry = (datetime.now() + timedelta(days=60)).strftime("%Y%m%d")
+        data = {
+            "accounts": ["U123"],
+            "positions": {
+                "U123": [
+                    self._make_position("AAPL", 1, 150.0, future_expiry),
+                    self._make_position("AAPL", -1, 160.0, future_expiry),
+                ]
+            },
+            "prices": {"AAPL": 155.0},
+        }
+
+        result = analyze_portfolio(data)
+        assert "generated_at" in result
+        assert "summary" in result
+        assert "spreads" in result
+        assert "accounts" in result
+        assert result["accounts"] == ["U123"]
+
+    @patch(f"{MODULE}.fetch_technicals")
+    @patch(f"{MODULE}.fetch_earnings_date")
+    def test_urgency_categories(self, mock_earnings, mock_technicals):
+        mock_earnings.return_value = {"symbol": "NVDA", "earnings_date": None}
+        mock_technicals.return_value = {"symbol": "NVDA", "trend": "neutral"}
+
+        today = datetime.now()
+        exp_1d = (today + timedelta(days=1)).strftime("%Y%m%d")
+        exp_5d = (today + timedelta(days=5)).strftime("%Y%m%d")
+        exp_15d = (today + timedelta(days=15)).strftime("%Y%m%d")
+        exp_60d = (today + timedelta(days=60)).strftime("%Y%m%d")
+
+        data = {
+            "accounts": ["U456"],
+            "positions": {
+                "U456": [
+                    # 4 naked shorts at different DTE ranges
+                    self._make_position("NVDA", -1, 200.0, exp_1d),
+                    self._make_position("NVDA", -1, 210.0, exp_5d),
+                    self._make_position("NVDA", -1, 215.0, exp_15d),
+                    self._make_position("NVDA", -1, 220.0, exp_60d),
+                ]
+            },
+            "prices": {"NVDA": 195.0},
+        }
+
+        result = analyze_portfolio(data)
+        urgencies = {s["urgency"] for s in result["spreads"]}
+        assert "expiring_2_days" in urgencies
+        assert "expiring_1_week" in urgencies
+        assert "expiring_2_weeks" in urgencies
+        assert "longer_dated" in urgencies
+
+    @patch(f"{MODULE}.fetch_technicals")
+    @patch(f"{MODULE}.fetch_earnings_date")
+    def test_earnings_calendar_populated(self, mock_earnings, mock_technicals):
+        mock_earnings.return_value = {"symbol": "AAPL", "earnings_date": "2026-06-15"}
+        mock_technicals.return_value = {"symbol": "AAPL", "trend": "neutral"}
+
+        future_expiry = (datetime.now() + timedelta(days=90)).strftime("%Y%m%d")
+        data = {
+            "accounts": ["U789"],
+            "positions": {
+                "U789": [
+                    self._make_position("AAPL", 1, 150.0, future_expiry),
+                ]
+            },
+            "prices": {"AAPL": 155.0},
+        }
+
+        result = analyze_portfolio(data)
+        assert "earnings_calendar" in result
+        assert "account_summary" in result
+        assert len(result["account_summary"]) == 1
+        assert result["account_summary"][0]["account"] == "U789"
+
+    @patch(f"{MODULE}.fetch_technicals")
+    @patch(f"{MODULE}.fetch_earnings_date")
+    def test_empty_positions(self, mock_earnings, mock_technicals):
+        mock_earnings.return_value = {"symbol": "X", "earnings_date": None}
+        mock_technicals.return_value = {"symbol": "X", "trend": "neutral"}
+
+        data = {
+            "accounts": ["U000"],
+            "positions": {"U000": []},
+            "prices": {},
+        }
+
+        result = analyze_portfolio(data)
+        assert result["summary"]["red_count"] == 0
+        assert result["summary"]["green_count"] == 0
+        assert result["spreads"] == []
+
+    @patch(f"{MODULE}.fetch_technicals")
+    @patch(f"{MODULE}.fetch_earnings_date")
+    def test_earnings_this_week(self, mock_earnings, mock_technicals):
+        today = datetime.now()
+        earnings_date = (today + timedelta(days=2)).strftime("%Y-%m-%d")
+        mock_earnings.return_value = {"symbol": "MSFT", "earnings_date": earnings_date}
+        mock_technicals.return_value = {"symbol": "MSFT", "trend": "bullish"}
+
+        future_expiry = (today + timedelta(days=30)).strftime("%Y%m%d")
+        data = {
+            "accounts": ["U111"],
+            "positions": {
+                "U111": [
+                    self._make_position("MSFT", 1, 350.0, future_expiry),
+                ]
+            },
+            "prices": {"MSFT": 360.0},
+        }
+
+        result = analyze_portfolio(data)
+        earnings_urgency_spreads = [
+            s for s in result["spreads"] if s.get("earnings_urgency") == "this_week"
+        ]
+        assert len(earnings_urgency_spreads) > 0

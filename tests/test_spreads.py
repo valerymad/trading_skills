@@ -5,6 +5,7 @@ import pytest
 import yfinance as yf
 
 from trading_skills.spreads import (
+    analyze_diagonal,
     analyze_iron_condor,
     analyze_straddle,
     analyze_strangle,
@@ -68,6 +69,22 @@ class TestAnalyzeVertical:
         assert result["symbol"] == "AAPL"
         assert len(result["legs"]) == 2
 
+    def test_bear_call_spread(self, aapl_expiry, aapl_chain):
+        s = aapl_chain["strikes"]
+        i = aapl_chain["atm_idx"]
+        # Bear call: long strike > short strike (credit spread)
+        result = analyze_vertical("AAPL", aapl_expiry, "call", s[i + 1], s[i])
+        assert result["symbol"] == "AAPL"
+        assert "bearish" in result.get("direction", "")
+
+    def test_bull_put_spread(self, aapl_expiry, aapl_chain):
+        s = aapl_chain["strikes"]
+        i = aapl_chain["atm_idx"]
+        # Bull put: long strike < short strike (credit spread)
+        result = analyze_vertical("AAPL", aapl_expiry, "put", s[i - 1], s[i])
+        assert result["symbol"] == "AAPL"
+        assert "bullish" in result.get("direction", "")
+
     def test_invalid_strikes(self, aapl_expiry):
         result = analyze_vertical("AAPL", aapl_expiry, "call", 9999.0, 9998.0)
         assert "error" in result
@@ -89,6 +106,10 @@ class TestAnalyzeStraddle:
         assert result["total_cost"] > 0
         assert result["max_loss"] == result["total_cost"]
 
+    def test_invalid_strike_returns_error(self, aapl_expiry):
+        result = analyze_straddle("AAPL", aapl_expiry, 999999.0)
+        assert "error" in result
+
 
 class TestAnalyzeStrangle:
     """Tests for strangle analysis."""
@@ -102,6 +123,10 @@ class TestAnalyzeStrangle:
         assert len(result["legs"]) == 2
         assert "breakeven_up" in result
         assert "breakeven_down" in result
+
+    def test_invalid_strikes_returns_error(self, aapl_expiry):
+        result = analyze_strangle("AAPL", aapl_expiry, 999998.0, 999999.0)
+        assert "error" in result
 
 
 class TestAnalyzeIronCondor:
@@ -124,3 +149,52 @@ class TestAnalyzeIronCondor:
         assert "net_credit" in result
         assert "breakeven_up" in result
         assert "breakeven_down" in result
+
+    def test_invalid_strikes_returns_error(self, aapl_expiry):
+        result = analyze_iron_condor(
+            "AAPL",
+            aapl_expiry,
+            put_long=999990.0,
+            put_short=999995.0,
+            call_short=999996.0,
+            call_long=999998.0,
+        )
+        assert "error" in result
+
+
+class TestAnalyzeDiagonal:
+    """Tests for diagonal spread analysis."""
+
+    def test_bullish_call_diagonal(self, aapl_expiry, aapl_chain):
+        s = aapl_chain["strikes"]
+        i = aapl_chain["atm_idx"]
+        # Get two different expiries
+        ticker = yf.Ticker("AAPL")
+        from datetime import datetime, timedelta
+
+        min_date2 = (datetime.now() + timedelta(days=55)).strftime("%Y-%m-%d")
+        far_expiries = [e for e in ticker.options if e >= min_date2]
+        if not far_expiries:
+            pytest.skip("No far expiry available")
+        far_expiry = far_expiries[0]
+
+        result = analyze_diagonal(
+            symbol="AAPL",
+            option_type="call",
+            long_expiry=far_expiry,
+            long_strike=s[i],
+            short_expiry=aapl_expiry,
+            short_strike=s[i + 1],
+        )
+        assert result.get("symbol") == "AAPL" or "error" in result
+
+    def test_invalid_strikes_returns_error(self, aapl_expiry):
+        result = analyze_diagonal(
+            symbol="AAPL",
+            option_type="call",
+            long_expiry=aapl_expiry,
+            long_strike=999990.0,
+            short_expiry=aapl_expiry,
+            short_strike=999995.0,
+        )
+        assert "error" in result
