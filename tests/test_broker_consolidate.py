@@ -213,3 +213,43 @@ class TestReadCsvFiles:
             rows, files = read_csv_files(Path(tmpdir))
             assert rows == []
             assert files == []
+
+    def test_exception_reading_file_is_skipped(self):
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            csv_path = Path(tmpdir) / "crash.csv"
+            csv_path.write_text("dummy")
+
+            with patch("builtins.open", side_effect=OSError("permission denied")):
+                rows, files = read_csv_files(Path(tmpdir))
+            assert rows == []
+            assert files == []
+
+
+class TestConsolidateRowsEdgeCases:
+    """Edge case tests for consolidate_rows."""
+
+    def test_bad_numeric_value_skipped(self):
+        rows = [
+            {
+                "UnderlyingSymbol": "AAPL",
+                "Symbol": "AAPL250321C200",
+                "TradeDate": "20250101",
+                "Strike": "200",
+                "Put/Call": "C",
+                "Buy/Sell": "SELL",
+                "Open/CloseIndicator": "O",
+                "Quantity": "not-a-number",
+                "Proceeds": "500",
+                "NetCash": "500",
+                "IBCommission": "-1.5",
+                "FifoPnlRealized": "0",
+                "ClientAccountID": "U123",
+                "Description": "Test",
+                "Expiry": "20250321",
+            }
+        ]
+        result = consolidate_rows(rows)
+        assert len(result) == 1
+        assert result[0]["Quantity"] == 0.0

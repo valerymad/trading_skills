@@ -3,6 +3,8 @@
 
 from datetime import datetime, timedelta
 
+import pytest
+
 from trading_skills.broker.roll import (
     calculate_roll_options,
     evaluate_short_candidates,
@@ -125,3 +127,20 @@ class TestCalculateRollOptions:
         ]
         result = calculate_roll_options(current, target_quotes, 1.0)
         assert len(result) == 0
+
+    def test_far_otm_penalty_applied(self):
+        # OTM > 15% should get safety_score penalty but still be included
+        quotes = [
+            {
+                "strike": 120,
+                "expiry": "20250321",
+                "bid": 0.50,
+                "ask": 0.80,
+                "mid": 0.65,
+                "last": 0.6,
+            }
+        ]
+        result = evaluate_short_candidates(quotes, 100.0, "C", 30)
+        assert len(result) == 1
+        # 20% OTM should have penalty applied (score still calculated)
+        assert result[0]["otm_pct"] == pytest.approx(20.0)

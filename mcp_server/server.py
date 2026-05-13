@@ -30,6 +30,7 @@ from trading_skills.broker.portfolio_action import (
     get_portfolio_data,
 )
 from trading_skills.broker.roll import find_roll_candidates
+from trading_skills.broker.stop_loss import get_stop_loss_data
 from trading_skills.correlation import compute_correlation
 from trading_skills.earnings import get_earnings_info, get_multiple_earnings
 from trading_skills.fundamentals import get_fundamentals
@@ -739,6 +740,49 @@ async def ib_collar(
         account: Account ID (optional)
     """
     return await find_collar_candidates(symbol, port, account)
+
+
+@mcp.tool()
+async def ib_stop_loss(
+    port: int = 7496,
+    account: str | None = None,
+    symbols: str | None = None,
+    stop_pct: float = 50.0,
+    short_near_strike_pct: float = 5.0,
+    price_mode: str = "mid",
+    execute: bool = False,
+    forced: bool = False,
+) -> dict:
+    """Analyze and manage downside stop-loss orders for PMCC, naked LEAPS, and stock positions.
+
+    Default mode is dry-run — no orders are placed unless execute=True.
+    Stop price = basis × (1 - stop_pct/100). Basis is max(current_mid, avg_cost)
+    normally; current_mid only when forced=True (can lower existing stops).
+    In execute mode: orphan SL_FALL_ orders are cancelled, then new conditional
+    stop orders are placed. PMCC stops use combo BAG orders (atomic LEAPS + shorts).
+    Requires TWS or IB Gateway running locally.
+
+    Args:
+        port: IB port (7496 for live, 7497 for paper)
+        account: Specific account ID (optional)
+        symbols: Comma-separated symbols to filter (optional, e.g. 'NVDA,QQQ')
+        stop_pct: Loss % that triggers exit (default 50)
+        short_near_strike_pct: Alert when spot is within this % of short strike (default 5)
+        price_mode: Option pricing — 'mid' (bid+ask)/2 or 'last'
+        execute: Place conditional stop-loss orders (default False = dry-run)
+        forced: Use current mid as basis, can lower existing stops (requires execute=True)
+    """
+    symbol_list = [s.strip().upper() for s in symbols.split(",")] if symbols else None
+    return await get_stop_loss_data(
+        port=port,
+        account=account,
+        symbols=symbol_list,
+        stop_pct=stop_pct,
+        short_near_strike_pct=short_near_strike_pct,
+        price_mode=price_mode,
+        dry_run=not execute,
+        forced=forced,
+    )
 
 
 def main():
