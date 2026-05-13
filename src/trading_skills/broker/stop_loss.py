@@ -634,7 +634,7 @@ async def get_stop_loss_data(
     port: int = 7496,
     account: str | None = None,
     symbols: list[str] | None = None,
-    stop_pct: float = 50.0,
+    stop_pct: float = 40.0,
     short_near_strike_pct: float = 5.0,
     price_mode: str = "mid",
     dry_run: bool = True,

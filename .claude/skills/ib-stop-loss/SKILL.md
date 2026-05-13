@@ -54,7 +54,7 @@ For each entry in `positions`, show a table:
 | Symbol | NVDA — pmcc (3 contracts) |
 | Spot | $219.05 |
 | LEAPS | 200C 20270115 · avg cost $44.27 · current $44.23 · basis $44.27 |
-| **Stop price** | $22.14 (50% stop) → action: place_new |
+| **Stop price** | $22.14 (40% stop) → action: place_new |
 | LEAPS loss | 0.1% |
 | Shorts | 235C 20260515 · received $0.61 · current $0.56 · 9.5% decayed |
 
@@ -84,7 +84,7 @@ Group alerts by symbol. Types:
 | `--port` | 7496 | IB Gateway/TWS port |
 | `--account` | all | Specific account ID |
 | `--symbols` | all | Analyze only these symbols |
-| `--stop-pct` | 50 | Loss % that triggers exit |
+| `--stop-pct` | 40 | Loss % that triggers exit |
 | `--short-near-strike-pct` | 5 | Near-strike alert threshold |
 | `--price-mode` | mid | Option pricing: `mid` or `last` |
 | `--execute` | off | Cancel orphans + place SL_ orders |
@@ -97,7 +97,7 @@ Group alerts by symbol. Types:
   "generated_at": "2026-05-12 10:00 ET",
   "dry_run": true,
   "forced": false,
-  "stop_pct": 50.0,
+  "stop_pct": 40.0,
   "short_near_strike_pct": 5.0,
   "accounts": ["U1234567"],
   "symbols_filter": null,

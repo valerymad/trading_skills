@@ -747,7 +747,7 @@ async def ib_stop_loss(
     port: int = 7496,
     account: str | None = None,
     symbols: str | None = None,
-    stop_pct: float = 50.0,
+    stop_pct: float = 40.0,
     short_near_strike_pct: float = 5.0,
     price_mode: str = "mid",
     execute: bool = False,
@@ -766,7 +766,7 @@ async def ib_stop_loss(
         port: IB port (7496 for live, 7497 for paper)
         account: Specific account ID (optional)
         symbols: Comma-separated symbols to filter (optional, e.g. 'NVDA,QQQ')
-        stop_pct: Loss % that triggers exit (default 50)
+        stop_pct: Loss % that triggers exit (default 40)
         short_near_strike_pct: Alert when spot is within this % of short strike (default 5)
         price_mode: Option pricing — 'mid' (bid+ask)/2 or 'last'
         execute: Place conditional stop-loss orders (default False = dry-run)

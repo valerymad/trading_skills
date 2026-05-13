@@ -26,9 +26,9 @@ async def main():
     parser.add_argument(
         "--stop-pct",
         type=float,
-        default=50.0,
+        default=40.0,
         dest="stop_pct",
-        help="Loss %% that triggers exit (default: 50)",
+        help="Loss %% that triggers exit (default: 40)",
     )
     parser.add_argument(
         "--short-near-strike-pct",
