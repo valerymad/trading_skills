@@ -26,7 +26,8 @@ uv run python scripts/scan.py SYMBOLS [options]
 - `--min-leaps-days` - Minimum LEAPS expiration in days (default: 270 = 9 months)
 - `--leaps-delta` - Target LEAPS delta (default: 0.80)
 - `--short-delta` - Target short call delta (default: 0.20)
-- `--output` - Save results to JSON file
+- `--output` - Save results to JSON file (use this; Claude generates the report from the JSON)
+- `--report` - Save auto-generated markdown to file (programmatic fallback only — prefer Claude-generated reports)
 
 ## Scoring System (max possible: 14, range: -4 to 14)
 
@@ -61,8 +62,9 @@ Returns JSON with:
 - `criteria` - Scan parameters used
 - `results` - Array sorted by score:
   - `symbol`, `price`, `iv_pct`, `pmcc_score`, `max_possible_score` (always 14)
-  - `leaps` - expiry, strike, delta, bid/ask, spread%, volume, OI
-  - `short` - expiry, strike, delta, bid/ask, spread%, volume, OI
+  - `leaps` - expiry, strike, delta, **iv** (calculated from bid/ask), **last_price**, bid/ask, spread%, volume, OI
+  - `short` - expiry, strike, delta, **iv** (calculated from bid/ask), **last_price**, bid/ask, spread%, volume, OI
+  - `earnings_date` - next earnings date (YYYY-MM-DD) or null
   - `metrics` - net_debit, short_yield%, annual_yield%, capital_required
   - `score_breakdown` - every scoring component as a `<name>_delta` (float) + `<name>` (explanation string) pair:
     - Base: `leaps_delta`, `short_delta`, `leaps_liquidity`, `short_liquidity`, `leaps_spread`, `short_spread`, `iv`, `yield`
@@ -71,11 +73,31 @@ Returns JSON with:
     - All `_delta` values sum to `pmcc_score`
 - `errors` - Symbols that failed (no options, insufficient data)
 
+## Report Generation
+
+When the user asks for a report, a written analysis, or a saved document:
+
+1. Run the scanner with `--output` to capture JSON data:
+   ```bash
+   uv run python scripts/scan.py SYMBOLS --output sandbox/PMCC_Scan_YYYY-MM-DD_HHmm.json
+   ```
+
+2. Read the JSON output.
+
+3. Generate the markdown report yourself using the template defined in `templates/markdown-template.md`. Do **not** use the `--report` flag — that produces mechanical string output. Claude-generated reports include real analysis, contextual warnings, and trader-relevant narrative.
+
+4. Save the generated markdown to `sandbox/PMCC_Scan_YYYY-MM-DD_HHmm.md` (match the JSON timestamp).
+
+5. Display the full report to the user.
+
 ## Examples
 
 ```bash
 # Scan specific symbols
 uv run python scripts/scan.py AAPL,MSFT,GOOGL,NVDA
+
+# Scan and save JSON for report generation
+uv run python scripts/scan.py AAPL,MSFT,GOOGL --output sandbox/PMCC_Scan_2026-01-15_1430.json
 
 # Use output from bullish scanner
 uv run python scripts/scan.py bullish_results.json
@@ -85,15 +107,21 @@ uv run python scripts/scan.py AAPL,MSFT --leaps-delta 0.70 --short-delta 0.15
 
 # Longer LEAPS (1 year minimum)
 uv run python scripts/scan.py AAPL,MSFT --min-leaps-days 365
-
-# Save results
-uv run python scripts/scan.py AAPL,MSFT,GOOGL --output pmcc_results.json
 ```
+
+## IV Calculation
+
+IV is always computed from market price data via Black-Scholes, never taken from Yahoo Finance's `impliedVolatility` column:
+
+- **During trading hours**: IV derived from bid/ask mid price
+- **Off-hours (bid=ask=0)**: IV derived from last price, using the option's last trade timestamp as the pricing moment (not current wall-clock time)
+
+This applies to both `compute_atm_iv` (used for scanner baseline IV) and per-option delta calculations.
 
 ## Key Constraints
 
 - Short strike **must be above** LEAPS strike
-- Options with bid = 0 (illiquid) are skipped
+- Options with bid = 0 and no last price are skipped
 - Moderate IV (25-50%) scores highest
 
 ## Interpretation
