@@ -13,7 +13,22 @@ from trading_skills.earnings import get_next_earnings_date
 from trading_skills.utils import days_to_expiry
 
 # Known futures symbols — options are FOP, not OPT
-FUTURES_SYMBOLS = {"NQ", "ES", "RTY", "YM", "CL", "GC", "SI", "ZB", "ZN", "ZF", "ZT", "6E", "6J", "6B"}
+FUTURES_SYMBOLS = {
+    "NQ",
+    "ES",
+    "RTY",
+    "YM",
+    "CL",
+    "GC",
+    "SI",
+    "ZB",
+    "ZN",
+    "ZF",
+    "ZT",
+    "6E",
+    "6J",
+    "6B",
+}
 
 
 def _is_futures(symbol: str) -> bool:
