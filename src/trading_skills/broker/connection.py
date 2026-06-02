@@ -4,7 +4,7 @@
 import asyncio
 from contextlib import asynccontextmanager
 
-from ib_async import IB, Stock
+from ib_async import IB, ContFuture, Stock
 
 from trading_skills.utils import fetch_with_timeout
 
@@ -94,18 +94,33 @@ def best_option_chain(chains: list):
     return max(pool, key=lambda c: len(c.expirations))
 
 
-async def fetch_spot_prices(ib: IB, symbols: list[str], timeout: float = 15.0) -> dict[str, float]:
-    """Fetch spot prices for stock symbols. Returns {symbol: price} dict.
+# Futures underlying -> exchange for ContFuture qualification.
+FUTURES_EXCHANGE = {
+    "NQ": "CME",
+    "ES": "CME",
+    "RTY": "CME",
+    "YM": "CBOT",
+    "CL": "NYMEX",
+    "GC": "COMEX",
+    "SI": "COMEX",
+    "ZB": "CBOT",
+    "ZN": "CBOT",
+    "ZF": "CBOT",
+    "ZT": "CBOT",
+    "6E": "CME",
+    "6J": "CME",
+    "6B": "CME",
+}
+
+
+async def _spot_from_contracts(ib: IB, contracts: list, timeout: float) -> dict[str, float]:
+    """Qualify contracts, stream market data briefly, return {symbol: price}.
 
     Uses streaming market data (not snapshot) to avoid hanging outside trading hours
     when IB's snapshot mode never completes for illiquid or after-hours markets.
     """
-    if not symbols:
-        return {}
-
-    stock_contracts = [Stock(sym, "SMART", "USD") for sym in symbols]
     qualified = await fetch_with_timeout(
-        ib.qualifyContractsAsync(*stock_contracts), timeout=timeout, default=[]
+        ib.qualifyContractsAsync(*contracts), timeout=timeout, default=[]
     )
     qualified = [qc for qc in qualified if qc is not None]
     if not qualified:
@@ -124,3 +139,25 @@ async def fetch_spot_prices(ib: IB, symbols: list[str], timeout: float = 15.0) -
         if price and price > 0:
             prices[ticker.contract.symbol] = price
     return prices
+
+
+async def fetch_spot_prices(ib: IB, symbols: list[str], timeout: float = 15.0) -> dict[str, float]:
+    """Fetch spot prices for stock symbols. Returns {symbol: price} dict."""
+    if not symbols:
+        return {}
+    contracts = [Stock(sym, "SMART", "USD") for sym in symbols]
+    return await _spot_from_contracts(ib, contracts, timeout)
+
+
+async def fetch_futures_spot_prices(
+    ib: IB, symbols: list[str], timeout: float = 15.0
+) -> dict[str, float]:
+    """Fetch spot prices for futures underlyings via continuous futures (ContFuture).
+
+    yfinance cannot price futures by their bare symbol (e.g. "NQ"), so the
+    portfolio report sources futures underlying prices from IB directly.
+    """
+    if not symbols:
+        return {}
+    contracts = [ContFuture(sym, FUTURES_EXCHANGE.get(sym, "CME")) for sym in symbols]
+    return await _spot_from_contracts(ib, contracts, timeout)

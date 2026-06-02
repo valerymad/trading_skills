@@ -9,6 +9,7 @@ import yfinance as yf
 
 from trading_skills.broker.connection import (
     CLIENT_IDS,
+    fetch_futures_spot_prices,
     fetch_positions,
     fetch_spot_prices,
     ib_connection,
@@ -17,6 +18,25 @@ from trading_skills.broker.connection import (
 from trading_skills.earnings import get_earnings_info
 from trading_skills.technicals import compute_raw_indicators
 from trading_skills.utils import _NY, days_to_expiry, generated_at_str
+
+# Futures underlying -> Yahoo continuous-future ticker for technical indicators.
+# yfinance does not recognize the bare futures symbol (e.g. "NQ" -> "NQ=F").
+FUTURES_YAHOO = {
+    "NQ": "NQ=F",
+    "ES": "ES=F",
+    "RTY": "RTY=F",
+    "YM": "YM=F",
+    "CL": "CL=F",
+    "GC": "GC=F",
+    "SI": "SI=F",
+    "ZB": "ZB=F",
+    "ZN": "ZN=F",
+    "ZF": "ZF=F",
+    "ZT": "ZT=F",
+    "6E": "6E=F",
+    "6J": "6J=F",
+    "6B": "6B=F",
+}
 
 
 def fetch_earnings_date(symbol: str) -> dict:
@@ -34,7 +54,7 @@ def fetch_technicals(symbol: str, period: str = "3mo") -> dict:
     result = {"symbol": symbol}
 
     try:
-        ticker = yf.Ticker(symbol)
+        ticker = yf.Ticker(FUTURES_YAHOO.get(symbol, symbol))
         df = ticker.history(period=period)
 
         if df.empty or len(df) < 20:
@@ -305,6 +325,8 @@ async def get_portfolio_data(port: int, account: str = None) -> dict:
 
             symbols = symbols - futures_symbols
             prices = await fetch_spot_prices(ib, list(symbols))
+            # Futures underlyings are priced via IB continuous futures (yfinance can't).
+            prices.update(await fetch_futures_spot_prices(ib, list(futures_symbols)))
             # Round prices for display
             prices = {k: round(v, 2) for k, v in prices.items()}
 
@@ -331,14 +353,22 @@ def analyze_portfolio(data: dict) -> dict:
 
     # Fetch earnings dates
     all_symbols = set()
+    futures_symbols = set()
     for positions in positions_by_account.values():
         for pos in positions:
             all_symbols.add(pos["symbol"])
+            if pos["sec_type"] in ("FUT", "FOP"):
+                futures_symbols.add(pos["symbol"])
 
     print("Fetching earnings dates...", file=sys.stderr)
     earnings = {}
     earnings_timing = {}
     for sym in all_symbols:
+        # Futures have no earnings; skip the (failing) yfinance lookup.
+        if sym in futures_symbols:
+            earnings[sym] = None
+            earnings_timing[sym] = None
+            continue
         result = fetch_earnings_date(sym)
         earnings[sym] = result.get("earnings_date")
         earnings_timing[sym] = result.get("earnings_timing")
