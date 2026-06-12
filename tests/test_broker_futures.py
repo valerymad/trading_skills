@@ -1,8 +1,6 @@
 # ABOUTME: Tests for the centralized futures symbol registry.
 # ABOUTME: Validates exchange mappings, is_futures helper, and Yahoo ticker conversion.
 
-import pytest
-
 from trading_skills.broker.futures import FUTURES_EXCHANGE, futures_yahoo_ticker
 
 
